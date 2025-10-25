@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DJ Visual Jockey</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      width: 100vw;
+      flex-direction: column;
+      color: #FFA500;
+      font-family: 'Arial', sans-serif;
+      position: relative;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+    #uploadBtn {
+      position: relative;
+      z-index: 10;
+      padding: 12px 24px;
+      font-size: 16px;
+      color: #FFA500;
+      background: #000;
+      border: 2px solid #FFA500;
+      border-radius: 25px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(255, 165, 0, 0.4);
+      transition: transform 0.3s ease, box-shadow 0.3s ease, opacity 0.5s ease;
+    }
+    #uploadBtn:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 20px rgba(255, 165, 0, 0.6);
+    }
+    #uploadBtn:active {
+      transform: scale(0.95);
+      box-shadow: 0 2px 10px rgba(255, 165, 0, 0.3);
+    }
+    #uploadBtn::after {
+      content: '🎵';
+      margin-left: 8px;
+      transition: transform 0.3s ease;
+    }
+    #uploadBtn:hover::after {
+      transform: rotate(360deg);
+    }
+
+    #progressBar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.9);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      z-index: 20;
+      opacity: 1;
+      transition: opacity 3s ease-out;
+    }
+    #progressContainer {
+      width: 80%;
+      max-width: 600px;
+      height: 40px;
+      background: #333;
+      border-radius: 20px;
+      overflow: hidden;
+      margin-top: 20px;
+      transform: rotate(-5deg);
+      position: relative;
+      box-shadow: 0 0 20px rgba(255, 165, 0, 0.6);
+    }
+    #progress {
+      height: 100%;
+      background: #FFA500;
+      width: 0%;
+      transition: width 0.3s ease;
+      text-align: center;
+      color: #000;
+      line-height: 40px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    #message {
+      margin-top: 30px;
+      font-size: 24px;
+      font-weight: bold;
+      color: #FFA500;
+      transform: rotate(-5deg);
+      text-shadow: 0 0 15px rgba(255, 165, 0, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <input type="file" id="uploadBtn" accept="audio/*">
+  <canvas id="canvas"></canvas>
+
+  <div id="progressBar">
+    <div id="message"></div>
+    <div id="progressContainer">
+      <div id="progress">0%</div>
+    </div>
+  </div>
+
+  <script>
+    let audioContext = null, analyser = null, source = null, bufferLength = 0, dataArray = null;
+    let beatTimes = [];
+    let energy = [];
+    let progress = 0;
+    let progressInterval = null;
+    let t = 0;
+    let beatIndex = 0;
+    let beatPulse = 0;
+    let beatCounter = 0;
+    let currentVisualizerIndex = 0;
+    let fadeOpacity = 1.0;
+    let isFadingOut = false;
+
+    // --- 视觉生物库 ---
+    const visualizers = [
+      // 生物1：原始代码水母
+      {
+        tIncrement: Math.PI / 45,
+        draw: (x, y) => {
+          const k = 9 * Math.cos(x / 8);
+          const e_val = y / 8 - 12.5;
+          let d = (k * k + e_val * e_val) / 99 + Math.sin(t) / 6 + 0.5;
+          const currentEnergy = energy.length > 0 ? energy[Math.floor(audioContext.currentTime * 10) % energy.length] / 255 : 0;
+          // 减小鼓点缩放的幅度，从0.5改为0.1
+          d *= (1 + beatPulse * 0.1) * (1 + currentEnergy * 0.3);
+          const q = 99 - e_val * Math.sin(Math.atan2(k, e_val) * 7) / d + k * (3 + Math.cos(d * d - t) * 2);
+          const c = d / 2 + e_val / 69 - t / 16;
+          const centerX = canvas.width / 2;
+          const centerY = canvas.height / 2;
+          const baseScale = (Math.min(canvas.width, canvas.height) / 2) / 400;
+          // 减小鼓点缩放的幅度，从0.5改为0.1
+          const overallScale = baseScale * (1 + currentEnergy * 0.2) * (1 + beatPulse * 0.1);
+          const xCoord = (q * Math.sin(c) + 200) * overallScale - (200 * overallScale) + centerX;
+          const yCoord = ((q + 19 * d) * Math.cos(c) + 200) * overallScale - (200 * overallScale) + centerY;
+          ctx.fillStyle = `rgb(255, 165, 0)`; // 橙色
+          ctx.fillRect(xCoord, yCoord, 1, 1);
+        },
+        loopParams: { numPoints: 10000, xDiv: 200, yDiv: 55 },
+        backgroundAlpha: 0.09,
+      },
+      // // 生物2
+      // {
+      //   tIncrement: Math.PI / 240,
+      //   draw: (x, y) => {
+      //     const d = Math.sqrt(Math.pow(5 * Math.cos(x / 19) * Math.cos(y / 30), 2) + Math.pow(y / 8 - 12, 2)) / 59 + 2;
+      //     const k = 5 * Math.cos(x / 19) * Math.cos(y / 30);
+      //     const e_val = y / 8 - 12;
+      //     const q = 4 * Math.sin(Math.atan2(k, e_val) * 9) + 9 * Math.sin(d - t) - k / d * (9 + Math.sin(d * 9 - t * 16) * 3);
+      //     const c = d * d / 7 - t;
+      //     const xCoord = q + 50 * Math.cos(c) + 200;
+      //     const yCoord = q * Math.sin(c) + d * 45 - 9;
+      //     ctx.fillStyle = `rgba(255, 255, 255, 0.36)`; // 白色带透明度
+      //     ctx.fillRect(xCoord, yCoord, 1, 1);
+      //   },
+      //   loopParams: { numPoints: 10000, xDiv: 1, yDiv: 41 },
+      //   backgroundAlpha: 0.09,
+      // },
+      // // 生物3
+      // {
+      //   tIncrement: Math.PI / 240,
+      //   draw: (x, y) => {
+      //     const k_val = (4 + Math.sin(x / 11 + t * 8)) * Math.cos(x / 14);
+      //     const e_val = y / 8 - 19;
+      //     const d = Math.sqrt(k_val * k_val + e_val * e_val) + Math.sin(y / 9 + t * 2);
+      //     const q = 2 * Math.sin(k_val * 2) + Math.sin(y / 17) * k_val * (9 + 2 * Math.sin(y - d * 3));
+      //     const c = d * d / 49 - t;
+      //     const xCoord = q + 50 * Math.cos(c) + 200;
+      //     const yCoord = q * Math.sin(c) + d * 39 - 440;
+      //     ctx.fillStyle = `rgba(255, 255, 255, 0.96)`;
+      //     ctx.fillRect(xCoord, yCoord, 1, 1);
+      //   },
+      //   loopParams: { numPoints: 10000, xDiv: 1, yDiv: 235 },
+      //   backgroundAlpha: 0.09,
+      // },
+      // // 生物4
+      // {
+      //   tIncrement: Math.PI / 120,
+      //   draw: (x, y) => {
+      //     const k_val = (4 + Math.cos(y)) * Math.cos(x / 4);
+      //     const e_val = y / 8 - 20;
+      //     const d = Math.sqrt(k_val * k_val + e_val * e_val);
+      //     const q = Math.sin(k_val * 3) + Math.sin(y / 19 + 9) * k_val * (6 + Math.sin(e_val * 14 - d));
+      //     const c = d - t;
+      //     const xCoord = q * Math.cos(d / 8 + t / 4) + 50 * Math.cos(c) + 200;
+      //     const yCoord = q * Math.sin(c) + d * 7 * Math.sin(c / 4) + 200;
+      //     ctx.fillStyle = `rgba(255, 255, 255, 1.16)`; // 1.16在p5.js中有效，但在canvas中会是1.0
+      //     ctx.fillRect(xCoord, yCoord, 1, 1);
+      //   },
+      //   loopParams: { numPoints: 10000, xDiv: 1, yDiv: 235 },
+      //   backgroundAlpha: 0.09,
+      // },
+      // // 生物5
+      // {
+      //   tIncrement: Math.PI / 240,
+      //   draw: (x, y) => {
+      //     const k_val = (4 + Math.sin(y * 2 - t) * 3) * Math.cos(x / 29);
+      //     const e_val = y / 8 - 13;
+      //     const d = Math.sqrt(k_val * k_val + e_val * e_val);
+      //     const q = 3 * Math.sin(k_val * 2) + 0.3 / k_val + Math.sin(y / 25) * k_val * (9 + 4 * Math.sin(e_val * 9 - d * 3 + t * 2));
+      //     const c = d - t;
+      //     const xCoord = q + 30 * Math.cos(c) + 200;
+      //     const yCoord = q * Math.sin(c) + d * 39 - 220;
+      //     ctx.fillStyle = `rgba(255, 255, 255, 0.96)`;
+      //     ctx.fillRect(xCoord, yCoord, 1, 1);
+      //   },
+      //   loopParams: { numPoints: 10000, xDiv: 1, yDiv: 235 },
+      //   backgroundAlpha: 0.09,
+      // },
+      // 生物6
+      {
+        tIncrement: Math.PI / 15,
+        draw: (x, y) => {
+          const k_val = 4 * Math.cos(x / 29);
+          const e_val = y / 7 - 13;
+          const d = Math.sqrt(k_val * k_val + e_val * e_val);
+          const q = 3 * Math.sin(Math.atan2(k_val, e_val) * 19) + Math.sin(y / 19) * k_val * (9 + 2 * Math.sin(e_val * 9 - d * 3 + t / 4));
+          const c = d - t / 8;
+          const xCoord = q + 60 * Math.cos(c) + 200;
+          const yCoord = q * Math.sin(c) + d * 39 - 195;
+          ctx.fillStyle = `rgba(255, 255, 255, 1.46)`;
+          ctx.fillRect(xCoord, yCoord, 1, 1);
+        },
+        loopParams: { numPoints: 10000, xDiv: 1, yDiv: 235 },
+        backgroundAlpha: 0.09,
+      },
+      // 生物7
+      {
+        tIncrement: Math.PI / 20,
+        draw: (x, y) => {
+          const k = 5 * Math.cos(x / 14) * Math.cos(y / 30);
+          const e_val = y / 8 - 13;
+          const d = (k * k + e_val * e_val) / 59 + 4;
+          const q = 60 - 3 * Math.sin(Math.atan2(k, e_val) * e_val) + k * (3 + 4 / d * Math.sin(d * d - t * 2));
+          const c = d / 2 + e_val / 99 - t / 18;
+          const xCoord = (q * Math.sin(c) + 200);
+          const yCoord = (q + d * 9) * Math.cos(c) + 200;
+          ctx.fillStyle = `rgba(255, 255, 255, 0.66)`;
+          ctx.fillRect(xCoord, yCoord, 1, 1);
+        },
+        loopParams: { numPoints: 10000, xDiv: 200, yDiv: 43 },
+        backgroundAlpha: 0.09,
+      },
+      // 生物8
+      {
+        tIncrement: Math.PI / 90,
+        draw: (x, y) => {
+          const k = x / 4 - 12.5;
+          const e_val = y / 9;
+          const o = Math.sqrt(k * k + e_val * e_val) / 9;
+          const q = 99 + 3 * (Math.tan(y / 2) / 2 + Math.cos(y)) / k + k * (3 + Math.cos(y) / 3 + Math.sin(e_val + o * 4 - t * 2));
+          const c = o / 4 + e_val / 4 - t / 8;
+          const xCoord = (q * Math.cos(c) * Math.cos(c / 2 - e_val / 3 + t / 8)) + 200;
+          const yCoord = q * Math.sin(c) + 200;
+          ctx.fillStyle = `rgba(255, 255, 255, 0.46)`;
+          ctx.fillRect(xCoord, yCoord, 1, 1);
+        },
+        loopParams: { numPoints: 30000, xDiv: 100, yDiv: 350 },
+        backgroundAlpha: 0.06,
+      }
+    ];
+
+    const canvas = document.getElementById('canvas');
+    if (canvas) {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      });
+    }
+    const ctx = canvas ? canvas.getContext('2d') : null;
+    const uploadBtn = document.getElementById('uploadBtn');
+    const progressBar = document.getElementById('progressBar');
+    const progressElement = document.getElementById('progress');
+    const messageElement = document.getElementById('message');
+
+    uploadBtn?.addEventListener('change', handleFile);
+
+    function handleFile(event) {
+      const file = event.target.files[0];
+      if (!file || !ctx || !progressBar || !progressElement || !messageElement || !uploadBtn) return;
+
+      uploadBtn.style.opacity = '0';
+      setTimeout(() => {
+        uploadBtn.style.display = 'none';
+      }, 500);
+
+      progress = 0;
+      progressBar.style.display = 'flex';
+      progressBar.style.opacity = '1';
+      messageElement.textContent = 'Entering the Music World...';
+      progressElement.style.width = `${progress}%`;
+      progressElement.textContent = `${progress}%`;
+
+      progressInterval = setInterval(() => {
+        if (progress < 99) {
+          progress += Math.random() * 5;
+          progress = Math.min(progress, 99);
+          progressElement.style.width = `${progress}%`;
+          progressElement.textContent = `${Math.floor(progress)}%`;
+        }
+      }, 300);
+
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // 注意：这里需要替换为您自己的后端服务地址
+      fetch('http://210.45.71.67:5005/analyze_audio', {
+        method: 'POST',
+        body: formData
+      })
+      .then(response => {
+        if (!response.ok) throw new Error('Network response was not ok');
+        return response.json();
+      })
+      .then(data => {
+        if (!data.beat_times || !data.energy) throw new Error('Invalid data from server');
+        clearInterval(progressInterval);
+        progress = 100;
+        progressElement.style.width = `${progress}%`;
+        progressElement.textContent = `${progress}%`;
+        messageElement.textContent = 'Ready to Rock!';
+
+        beatTimes = data.beat_times;
+        energy = data.energy;
+
+        setTimeout(() => {
+          progressBar.style.opacity = '0';
+          setTimeout(() => {
+            progressBar.style.display = 'none';
+            playAudio(file);
+          }, 3000);
+        }, 1000);
+      })
+      .catch(error => {
+        console.error('Error during fetch or data processing:', error);
+        clearInterval(progressInterval);
+        progressElement.textContent = 'Error';
+        messageElement.textContent = 'Failed to enter the Music World.';
+        uploadBtn.style.display = 'block';
+        uploadBtn.style.opacity = '1';
+        progressBar.style.display = 'none';
+      });
+    }
+
+    function playAudio(file) {
+      if (!file || !ctx) return;
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          audioContext.decodeAudioData(e.target.result, function(buffer) {
+            source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+            source.start(0);
+            animate();
+          }, function(error) {
+            console.error('Audio decoding error:', error);
+          });
+        };
+        reader.readAsArrayBuffer(file);
+      } catch (e) {
+        console.error('Audio context error:', e);
+      }
+    }
+
+    function animate() {
+      if (!ctx || !analyser || !canvas) return;
+      requestAnimationFrame(animate);
+
+      // --- 渐隐渐显切换逻辑 ---
+      if (isFadingOut) {
+        fadeOpacity -= 0.05; // 渐隐速度
+        if (fadeOpacity <= 0) {
+          fadeOpacity = 0;
+          isFadingOut = false;
+          currentVisualizerIndex = (currentVisualizerIndex + 1) % visualizers.length;
+          // 切换后立即开始渐显
+        }
+      } else if (fadeOpacity < 1.0) {
+        fadeOpacity += 0.05; // 渐显速度
+      }
+
+      ctx.save();
+      ctx.globalAlpha = fadeOpacity; // 应用透明度
+
+      // --- 音频分析和节拍触发 ---
+      analyser.getByteFrequencyData(dataArray);
+      const averageFrequency = dataArray.reduce((a, b) => a + b) / bufferLength || 0;
+
+      if (beatTimes.length > beatIndex && audioContext && audioContext.currentTime >= beatTimes[beatIndex]) {
+          beatPulse = 1.0;
+          beatIndex++;
+          beatCounter++;
+          // 每16个鼓点切换一次生物
+          if (beatCounter >= 16) {
+              isFadingOut = true;
+              beatCounter = 0;
+          }
+      }
+      beatPulse = Math.max(0, beatPulse - 0.05);
+
+      // 获取当前活动的视觉生物
+      const currentVisualizer = visualizers[currentVisualizerIndex];
+      // 根据当前生物的背景透明度来绘制背景，实现动态拖影效果
+      ctx.fillStyle = `rgba(0, 0, 0, ${currentVisualizer.backgroundAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 根据当前生物的tIncrement和音频数据来更新时间变量
+      let audio_speed_boost = (averageFrequency / 255) * 0.05;
+      t += currentVisualizer.tIncrement + audio_speed_boost;
+
+      // 绘制当前生物
+      for (let i = 0; i < currentVisualizer.loopParams.numPoints; i++) {
+        currentVisualizer.draw(i % currentVisualizer.loopParams.xDiv, i / currentVisualizer.loopParams.yDiv);
+      }
+      ctx.restore();
+    }
+  </script>
+</body>
+</html>
